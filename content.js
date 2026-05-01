@@ -29,6 +29,18 @@
       running: 'running',
       almostDone: 'almost done',
       overtime: 'time exceeded',
+      configurePeople: 'Configure people',
+      peopleTitle: 'People',
+      closePanel: 'Close panel',
+      addPlaceholder: 'Name',
+      addBtn: 'Add',
+      removeTitle: 'Remove',
+      randomOrder: 'Random order',
+      upNext: 'Up next',
+      noPeopleHint: 'No one added yet. The counter will show Person 1, 2…',
+      stranger: 'Stranger',
+      showOrder: 'Show running order',
+      hideOrder: 'Hide running order',
     },
     es: {
       title: 'Daily timer',
@@ -47,6 +59,18 @@
       running: 'en curso',
       almostDone: 'queda poco',
       overtime: 'tiempo excedido',
+      configurePeople: 'Configurar personas',
+      peopleTitle: 'Personas',
+      closePanel: 'Cerrar panel',
+      addPlaceholder: 'Nombre',
+      addBtn: 'Agregar',
+      removeTitle: 'Quitar',
+      randomOrder: 'Orden aleatorio',
+      upNext: 'Sigue',
+      noPeopleHint: 'Aún no agregaste a nadie. El contador mostrará Persona 1, 2…',
+      stranger: 'Desconocido',
+      showOrder: 'Mostrar orden de la daily',
+      hideOrder: 'Ocultar orden de la daily',
     },
   };
   const t = (navigator.language || 'en').toLowerCase().startsWith('es') ? STRINGS.es : STRINGS.en;
@@ -62,19 +86,33 @@
   let soundOn = true;
   let visible = true;
   let collapsed = false;
+  let people = [];
+  let randomOrder = false;
+  let order = []; // current cycling order; in-memory only (re-shuffled per daily)
+  let dailyStarted = false;
+  let panelOpen = false;
+  let orderViewOpen = false;
+  const spoken = new Set(); // names already spoken in the current daily
 
   // Restore preferences
-  chrome.storage.local.get(['totalDuration', 'soundOn', 'visible', 'collapsed', 'position'], (data) => {
-    if (typeof data.totalDuration === 'number') totalDuration = data.totalDuration;
-    if (typeof data.soundOn === 'boolean') soundOn = data.soundOn;
-    if (typeof data.visible === 'boolean') visible = data.visible;
-    if (typeof data.collapsed === 'boolean') collapsed = data.collapsed;
-    remaining = totalDuration;
-    init(data.position);
-  });
+  chrome.storage.local.get(
+    ['totalDuration', 'soundOn', 'visible', 'collapsed', 'position', 'people', 'randomOrder', 'orderViewOpen'],
+    (data) => {
+      if (typeof data.totalDuration === 'number') totalDuration = data.totalDuration;
+      if (typeof data.soundOn === 'boolean') soundOn = data.soundOn;
+      if (typeof data.visible === 'boolean') visible = data.visible;
+      if (typeof data.collapsed === 'boolean') collapsed = data.collapsed;
+      if (Array.isArray(data.people)) people = data.people.filter(p => typeof p === 'string');
+      if (typeof data.randomOrder === 'boolean') randomOrder = data.randomOrder;
+      if (typeof data.orderViewOpen === 'boolean') orderViewOpen = data.orderViewOpen;
+      remaining = totalDuration;
+      buildOrder();
+      init(data.position);
+    }
+  );
 
   function persist() {
-    chrome.storage.local.set({ totalDuration, soundOn, visible, collapsed });
+    chrome.storage.local.set({ totalDuration, soundOn, visible, collapsed, people, randomOrder, orderViewOpen });
   }
 
   function persistPosition(top, right) {
@@ -124,16 +162,45 @@
     const sec = s % 60;
     return m + ':' + (sec < 10 ? '0' : '') + sec;
   }
+  function buildOrder() {
+    order = [...people];
+    if (randomOrder) {
+      for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+    }
+  }
 
   // ===== UI =====
-  let root, ring, timeDisplay, phaseLabel, statusDot, counterEl,
+  let root, ring, timeDisplay, phaseLabel, statusDot,
+      currentNameEl, nextUpEl,
       durationDisplayEl, btnPlus, btnMinus, btnStart, btnNext,
-      btnReset, soundToggle, miniTime, header;
+      btnReset, soundToggle, miniTime, header,
+      sidePanelEl, peopleListEl, addInputEl, addFormEl, randomToggleEl,
+      orderListEl, btnOrderToggle, btnPeopleToggle;
 
   function buildUI() {
     root = document.createElement('div');
     root.id = 'daily-timer-root';
     root.innerHTML = `
+      <div class="dt-side-panel">
+        <div class="dt-panel-header">
+          <span class="dt-panel-title">${t.peopleTitle}</span>
+          <button class="dt-icon-btn" data-action="closePanel" title="${t.closePanel}">×</button>
+        </div>
+        <div class="dt-panel-body">
+          <form class="dt-add-form">
+            <input type="text" class="dt-add-input" placeholder="${t.addPlaceholder}" maxlength="40" />
+            <button type="submit" class="dt-btn dt-btn-primary dt-add-btn">${t.addBtn}</button>
+          </form>
+          <ul class="dt-people-list"></ul>
+          <label class="dt-random-toggle">
+            <input type="checkbox" data-action="random" />
+            <span>${t.randomOrder}</span>
+          </label>
+        </div>
+      </div>
       <div class="dt-card">
         <div class="dt-header">
           <div class="dt-header-left">
@@ -141,6 +208,8 @@
             <span class="dt-title-text">${t.title}</span>
           </div>
           <div class="dt-header-buttons">
+            <button class="dt-icon-btn" data-action="people" title="${t.configurePeople}">☰</button>
+            <button class="dt-icon-btn dt-order-btn" data-action="toggleOrder" title="${t.showOrder}">⇅</button>
             <button class="dt-icon-btn" data-action="collapse" title="${t.minimize}">−</button>
             <button class="dt-icon-btn" data-action="close" title="${t.close}">×</button>
           </div>
@@ -151,7 +220,10 @@
           <button class="dt-icon-btn" data-action="expand" title="${t.expand}">▢</button>
         </div>
         <div class="dt-body">
-          <div class="dt-counter">${t.person} <span class="dt-person-num">1</span></div>
+          <div class="dt-counter">
+            <div class="dt-current-name"></div>
+            <div class="dt-next-up" hidden></div>
+          </div>
           <div class="dt-ring-wrap">
             <svg viewBox="0 0 160 160">
               <circle class="dt-ring-bg" cx="80" cy="80" r="75"></circle>
@@ -180,6 +252,9 @@
             </label>
           </div>
         </div>
+        <div class="dt-order-view">
+          <ol class="dt-order-list"></ol>
+        </div>
       </div>
     `;
     document.body.appendChild(root);
@@ -189,7 +264,8 @@
     timeDisplay = root.querySelector('.dt-time');
     phaseLabel = root.querySelector('.dt-phase');
     statusDot = root.querySelectorAll('.dt-status-dot');
-    counterEl = root.querySelector('.dt-person-num');
+    currentNameEl = root.querySelector('.dt-current-name');
+    nextUpEl = root.querySelector('.dt-next-up');
     durationDisplayEl = root.querySelector('.dt-duration-display');
     btnPlus = root.querySelector('[data-action="plus"]');
     btnMinus = root.querySelector('[data-action="minus"]');
@@ -199,15 +275,41 @@
     soundToggle = root.querySelector('[data-action="sound"]');
     miniTime = root.querySelector('.dt-mini-time');
     header = root.querySelector('.dt-header');
+    sidePanelEl = root.querySelector('.dt-side-panel');
+    peopleListEl = root.querySelector('.dt-people-list');
+    addInputEl = root.querySelector('.dt-add-input');
+    addFormEl = root.querySelector('.dt-add-form');
+    randomToggleEl = root.querySelector('[data-action="random"]');
+    orderListEl = root.querySelector('.dt-order-list');
+    btnOrderToggle = root.querySelector('[data-action="toggleOrder"]');
+    btnPeopleToggle = root.querySelector('[data-action="people"]');
 
     soundToggle.checked = soundOn;
+    randomToggleEl.checked = randomOrder;
   }
 
   function applyVisibility() {
     if (!visible) root.classList.add('dt-hidden');
     else root.classList.remove('dt-hidden');
-    if (collapsed) root.classList.add('dt-collapsed');
-    else root.classList.remove('dt-collapsed');
+    if (collapsed) {
+      root.classList.add('dt-collapsed');
+      // Collapsing closes the panel/order view — it doesn't make sense over a mini bar.
+      panelOpen = false;
+      orderViewOpen = false;
+    } else {
+      root.classList.remove('dt-collapsed');
+    }
+    if (panelOpen) root.classList.add('dt-panel-open');
+    else root.classList.remove('dt-panel-open');
+    if (orderViewOpen) root.classList.add('dt-order-open');
+    else root.classList.remove('dt-order-open');
+    if (btnOrderToggle) {
+      btnOrderToggle.classList.toggle('dt-active', orderViewOpen);
+      btnOrderToggle.title = orderViewOpen ? t.hideOrder : t.showOrder;
+    }
+    if (btnPeopleToggle) {
+      btnPeopleToggle.classList.toggle('dt-active', panelOpen);
+    }
   }
 
   // ===== Render =====
@@ -266,8 +368,93 @@
     btnPlus.disabled = totalDuration >= MAX_DURATION;
   }
 
+  function nameAt(idx) {
+    // idx is 0-based position in the daily.
+    // 0..order.length-1 → named person; beyond → "Stranger N" (counted from 1).
+    if (idx < order.length) return order[idx];
+    return `${t.stranger} ${idx - order.length + 1}`;
+  }
+
   function updateCounter() {
-    counterEl.textContent = personCount;
+    if (people.length === 0) {
+      currentNameEl.textContent = `${t.person} ${personCount}`;
+      nextUpEl.hidden = true;
+      return;
+    }
+    const idx = personCount - 1;
+    currentNameEl.textContent = nameAt(idx);
+    nextUpEl.textContent = `${t.upNext}: ${nameAt(idx + 1)}`;
+    nextUpEl.hidden = false;
+  }
+
+  function renderOrderView() {
+    if (!orderListEl) return;
+    orderListEl.innerHTML = '';
+    // Order view shows the named participants only (strangers are dynamic).
+    if (order.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'dt-order-empty';
+      li.textContent = t.noPeopleHint;
+      orderListEl.appendChild(li);
+      return;
+    }
+    const currentIdx = personCount - 1;
+    order.forEach((name, i) => {
+      const li = document.createElement('li');
+      li.className = 'dt-order-item';
+      li.draggable = true;
+      li.dataset.orderIdx = String(i);
+      if (spoken.has(name)) li.classList.add('dt-spoken');
+      if (i === currentIdx && currentIdx < order.length) li.classList.add('dt-current');
+
+      const handle = document.createElement('span');
+      handle.className = 'dt-order-handle';
+      handle.textContent = '⋮⋮';
+
+      const num = document.createElement('span');
+      num.className = 'dt-order-num';
+      num.textContent = `${i + 1}.`;
+
+      const nameEl = document.createElement('span');
+      nameEl.className = 'dt-order-name';
+      nameEl.textContent = name;
+
+      li.appendChild(handle);
+      li.appendChild(num);
+      li.appendChild(nameEl);
+      orderListEl.appendChild(li);
+    });
+  }
+
+  function refreshAll() {
+    renderPeopleList();
+    renderOrderView();
+    updateCounter();
+  }
+
+  function renderPeopleList() {
+    peopleListEl.innerHTML = '';
+    if (people.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'dt-people-empty';
+      li.textContent = t.noPeopleHint;
+      peopleListEl.appendChild(li);
+      return;
+    }
+    people.forEach((name, i) => {
+      const li = document.createElement('li');
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'dt-person-name';
+      nameSpan.textContent = name;
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'dt-person-remove';
+      removeBtn.dataset.removeIdx = String(i);
+      removeBtn.textContent = '×';
+      removeBtn.title = t.removeTitle;
+      li.appendChild(nameSpan);
+      li.appendChild(removeBtn);
+      peopleListEl.appendChild(li);
+    });
   }
 
   // ===== Actions =====
@@ -286,10 +473,12 @@
 
   function start() {
     if (running) { pause(); return; }
+    dailyStarted = true;
     ensureAudio();
     running = true;
     btnStart.textContent = t.pause;
     intervalId = setInterval(tick, 1000);
+    renderOrderView(); // refresh "current" highlight
     render();
   }
 
@@ -307,12 +496,23 @@
     remaining = totalDuration;
     warned = false;
     finished = false;
+    // Exit daily mode: next Start begins a fresh daily with a new shuffle.
+    personCount = 1;
+    spoken.clear();
+    dailyStarted = false;
+    buildOrder();
     btnStart.textContent = t.start;
+    refreshAll();
     render();
   }
 
   function nextPerson() {
+    // Mark the just-finished speaker as spoken (only for named people).
+    const prevIdx = personCount - 1;
+    if (prevIdx < order.length) spoken.add(order[prevIdx]);
     personCount++;
+    dailyStarted = true;
+    renderOrderView();
     updateCounter();
     if (intervalId) clearInterval(intervalId);
     intervalId = null;
@@ -341,8 +541,47 @@
   }
 
   // ===== Event wiring =====
+  function addPerson(name) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    people.push(trimmed);
+    buildOrder();
+    refreshAll();
+    persist();
+  }
+
+  function removePerson(idx) {
+    if (idx < 0 || idx >= people.length) return;
+    const removedName = people[idx];
+    people.splice(idx, 1);
+    spoken.delete(removedName);
+    buildOrder();
+    refreshAll();
+    persist();
+  }
+
+  function moveInOrder(from, to) {
+    if (from === to || from < 0 || to < 0 || from >= order.length || to >= order.length) return;
+    const [item] = order.splice(from, 1);
+    order.splice(to, 0, item);
+    // Mirror in `people` so the manual ordering persists across sessions.
+    const pFrom = people.indexOf(item);
+    if (pFrom !== -1) {
+      people.splice(pFrom, 1);
+      const insertAt = Math.min(to, people.length);
+      people.splice(insertAt, 0, item);
+    }
+    refreshAll();
+    persist();
+  }
+
   function wireEvents() {
     root.addEventListener('click', (e) => {
+      const removeIdx = e.target.dataset.removeIdx;
+      if (removeIdx !== undefined) {
+        removePerson(parseInt(removeIdx, 10));
+        return;
+      }
       const action = e.target.dataset.action;
       if (!action) return;
       switch (action) {
@@ -354,7 +593,60 @@
         case 'collapse': collapsed = true; applyVisibility(); persist(); break;
         case 'expand': collapsed = false; applyVisibility(); persist(); break;
         case 'close': visible = false; applyVisibility(); persist(); break;
+        case 'people': panelOpen = !panelOpen; applyVisibility(); break;
+        case 'closePanel': panelOpen = false; applyVisibility(); break;
+        case 'toggleOrder': orderViewOpen = !orderViewOpen; applyVisibility(); persist(); break;
       }
+    });
+
+    addFormEl.addEventListener('submit', (e) => {
+      e.preventDefault();
+      addPerson(addInputEl.value);
+      addInputEl.value = '';
+      addInputEl.focus();
+    });
+
+    randomToggleEl.addEventListener('change', () => {
+      randomOrder = randomToggleEl.checked;
+      buildOrder();
+      refreshAll();
+      persist();
+    });
+
+    // Drag and drop on the order list.
+    let draggedIdx = null;
+    orderListEl.addEventListener('dragstart', (e) => {
+      const li = e.target.closest('li[data-order-idx]');
+      if (!li) return;
+      draggedIdx = parseInt(li.dataset.orderIdx, 10);
+      li.classList.add('dt-dragging');
+      try {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(draggedIdx));
+      } catch (_) {}
+    });
+    orderListEl.addEventListener('dragover', (e) => {
+      if (draggedIdx === null) return;
+      const li = e.target.closest('li[data-order-idx]');
+      if (!li) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      orderListEl.querySelectorAll('.dt-drop-over').forEach(el => el.classList.remove('dt-drop-over'));
+      li.classList.add('dt-drop-over');
+    });
+    orderListEl.addEventListener('drop', (e) => {
+      if (draggedIdx === null) return;
+      const li = e.target.closest('li[data-order-idx]');
+      if (!li) return;
+      e.preventDefault();
+      const target = parseInt(li.dataset.orderIdx, 10);
+      moveInOrder(draggedIdx, target);
+      draggedIdx = null;
+    });
+    orderListEl.addEventListener('dragend', () => {
+      draggedIdx = null;
+      orderListEl.querySelectorAll('.dt-dragging').forEach(el => el.classList.remove('dt-dragging'));
+      orderListEl.querySelectorAll('.dt-drop-over').forEach(el => el.classList.remove('dt-drop-over'));
     });
 
     soundToggle.addEventListener('change', () => {
@@ -436,7 +728,7 @@
     }
     applyVisibility();
     updateDurationDisplay();
-    updateCounter();
+    refreshAll();
     render();
     wireEvents();
   }

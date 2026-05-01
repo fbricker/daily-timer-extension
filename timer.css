@@ -99,10 +99,21 @@
 
 .dt-counter {
   text-align: center;
-  font-size: 11px;
-  color: #5f5e5a;
   margin-bottom: 8px;
   letter-spacing: 0.02em;
+}
+
+.dt-current-name {
+  font-size: 13px;
+  color: #1a1a1a;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.dt-next-up {
+  font-size: 10px;
+  color: #888780;
+  margin-top: 2px;
 }
 
 .dt-ring-wrap {
@@ -296,6 +307,246 @@
 
 .dt-mini-time.dt-over { color: #A32D2D; }
 
+/* Side panel (people list) — absolute, so it doesn't push the card */
+.dt-side-panel {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: calc(100% + 8px);
+  width: 220px;
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  font-size: 12px;
+}
+
+#daily-timer-root.dt-panel-open .dt-side-panel { display: block; }
+#daily-timer-root.dt-collapsed .dt-side-panel { display: none; }
+
+.dt-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px 8px 14px;
+  background: #f7f7f5;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 12px;
+  color: #5f5e5a;
+  font-weight: 500;
+}
+
+.dt-panel-body {
+  padding: 12px;
+}
+
+.dt-add-form {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.dt-add-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1a1a1a;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+
+.dt-add-input:focus {
+  border-color: #1a1a1a;
+}
+
+.dt-add-btn {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+}
+
+.dt-people-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dt-people-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f7f7f5;
+}
+
+.dt-people-list li.dt-people-empty {
+  background: transparent;
+  color: #888780;
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 4px 2px;
+}
+
+.dt-person-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dt-person-remove {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #888780;
+  font-size: 14px;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  padding: 0;
+  line-height: 1;
+}
+
+.dt-person-remove:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #A32D2D;
+}
+
+.dt-random-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 11px;
+  color: #5f5e5a;
+  cursor: pointer;
+}
+
+.dt-random-toggle input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Active state for header toggle buttons */
+.dt-icon-btn.dt-active {
+  background: rgba(0, 0, 0, 0.1);
+  color: #1a1a1a;
+}
+
+/* Order view (running order) */
+.dt-order-view {
+  display: none;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 10px 14px 14px;
+}
+
+#daily-timer-root.dt-order-open .dt-order-view {
+  display: block;
+}
+
+#daily-timer-root.dt-collapsed .dt-order-view {
+  display: none;
+}
+
+.dt-order-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.dt-order-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f7f7f5;
+  font-size: 12px;
+  cursor: grab;
+  border: 1px solid transparent;
+}
+
+.dt-order-item:active {
+  cursor: grabbing;
+}
+
+.dt-order-item.dt-dragging {
+  opacity: 0.4;
+}
+
+.dt-order-item.dt-drop-over {
+  border-color: #1D9E75;
+  border-style: dashed;
+}
+
+.dt-order-item.dt-spoken {
+  opacity: 0.5;
+}
+
+.dt-order-item.dt-spoken .dt-order-name {
+  text-decoration: line-through;
+}
+
+.dt-order-item.dt-current {
+  background: rgba(29, 158, 117, 0.14);
+  border-color: rgba(29, 158, 117, 0.45);
+  font-weight: 500;
+}
+
+.dt-order-item.dt-current::after {
+  content: '●';
+  color: #1D9E75;
+  font-size: 9px;
+  margin-left: auto;
+}
+
+.dt-order-empty {
+  color: #888780;
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 4px 2px;
+}
+
+.dt-order-handle {
+  color: #b4b2a9;
+  font-size: 12px;
+  letter-spacing: -2px;
+  flex-shrink: 0;
+}
+
+.dt-order-num {
+  color: #888780;
+  font-variant-numeric: tabular-nums;
+  min-width: 18px;
+  flex-shrink: 0;
+}
+
+.dt-order-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Dark mode support */
 @media (prefers-color-scheme: dark) {
   .dt-card {
@@ -335,4 +586,55 @@
   }
   .dt-btn-primary:hover { background: #ffffff; }
   .dt-footer { color: #888780; }
+
+  .dt-side-panel {
+    background: #2a2a28;
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+  .dt-panel-header {
+    background: #1f1f1d;
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+    color: #b4b2a9;
+  }
+  .dt-add-input {
+    background: #1f1f1d;
+    border-color: rgba(255, 255, 255, 0.15);
+    color: #f1efe8;
+  }
+  .dt-add-input:focus { border-color: #f1efe8; }
+  .dt-people-list li { background: #1f1f1d; }
+  .dt-people-list li.dt-people-empty {
+    background: transparent;
+    color: #888780;
+  }
+  .dt-person-name { color: #f1efe8; }
+  .dt-person-remove { color: #b4b2a9; }
+  .dt-person-remove:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #ff8a8a;
+  }
+  .dt-random-toggle {
+    border-top-color: rgba(255, 255, 255, 0.08);
+    color: #b4b2a9;
+  }
+  .dt-current-name { color: #f1efe8; }
+  .dt-next-up { color: #888780; }
+
+  .dt-icon-btn.dt-active {
+    background: rgba(255, 255, 255, 0.12);
+    color: #f1efe8;
+  }
+  .dt-order-view {
+    border-top-color: rgba(255, 255, 255, 0.08);
+  }
+  .dt-order-item {
+    background: #1f1f1d;
+    color: #f1efe8;
+  }
+  .dt-order-item.dt-current {
+    background: rgba(29, 158, 117, 0.22);
+    border-color: rgba(29, 158, 117, 0.6);
+  }
+  .dt-order-handle { color: #6f6e69; }
+  .dt-order-num { color: #888780; }
 }
