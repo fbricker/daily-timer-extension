@@ -10,6 +10,47 @@
   const MAX_DURATION = 600;
   const CIRC = 471.24; // 2 * PI * 75 (radius)
 
+  // ===== i18n (default English, Spanish if browser language is Spanish) =====
+  const STRINGS = {
+    en: {
+      title: 'Daily timer',
+      minimize: 'Minimize',
+      close: 'Close (click the icon to reopen)',
+      expand: 'Expand',
+      person: 'Person',
+      duration: 'Duration',
+      start: 'Start',
+      pause: 'Pause',
+      resume: 'Resume',
+      next: 'Next',
+      reset: 'Reset',
+      sound: 'Sound',
+      paused: 'paused',
+      running: 'running',
+      almostDone: 'almost done',
+      overtime: 'time exceeded',
+    },
+    es: {
+      title: 'Daily timer',
+      minimize: 'Minimizar',
+      close: 'Cerrar (clic en el ícono para reabrir)',
+      expand: 'Expandir',
+      person: 'Persona',
+      duration: 'Duración',
+      start: 'Iniciar',
+      pause: 'Pausar',
+      resume: 'Reanudar',
+      next: 'Siguiente',
+      reset: 'Reiniciar',
+      sound: 'Sonido',
+      paused: 'en pausa',
+      running: 'en curso',
+      almostDone: 'queda poco',
+      overtime: 'tiempo excedido',
+    },
+  };
+  const t = (navigator.language || 'en').toLowerCase().startsWith('es') ? STRINGS.es : STRINGS.en;
+
   // State
   let totalDuration = 120;
   let remaining = totalDuration;
@@ -97,20 +138,20 @@
         <div class="dt-header">
           <div class="dt-header-left">
             <div class="dt-status-dot"></div>
-            <span class="dt-title-text">Daily timer</span>
+            <span class="dt-title-text">${t.title}</span>
           </div>
           <div class="dt-header-buttons">
-            <button class="dt-icon-btn" data-action="collapse" title="Minimizar">−</button>
-            <button class="dt-icon-btn" data-action="close" title="Cerrar (clic en el ícono para reabrir)">×</button>
+            <button class="dt-icon-btn" data-action="collapse" title="${t.minimize}">−</button>
+            <button class="dt-icon-btn" data-action="close" title="${t.close}">×</button>
           </div>
         </div>
         <div class="dt-mini">
           <div class="dt-status-dot"></div>
           <span class="dt-mini-time">2:00</span>
-          <button class="dt-icon-btn" data-action="expand" title="Expandir">▢</button>
+          <button class="dt-icon-btn" data-action="expand" title="${t.expand}">▢</button>
         </div>
         <div class="dt-body">
-          <div class="dt-counter">Persona <span class="dt-person-num">1</span></div>
+          <div class="dt-counter">${t.person} <span class="dt-person-num">1</span></div>
           <div class="dt-ring-wrap">
             <svg viewBox="0 0 160 160">
               <circle class="dt-ring-bg" cx="80" cy="80" r="75"></circle>
@@ -118,24 +159,24 @@
             </svg>
             <div class="dt-time-display">
               <div class="dt-time">2:00</div>
-              <div class="dt-phase">en pausa</div>
+              <div class="dt-phase">${t.paused}</div>
             </div>
           </div>
           <div class="dt-duration-config">
-            <span class="dt-label">Duración</span>
+            <span class="dt-label">${t.duration}</span>
             <button class="dt-step-btn" data-action="minus">−</button>
             <span class="dt-duration-display">2:00</span>
             <button class="dt-step-btn" data-action="plus">+</button>
           </div>
           <div class="dt-controls">
-            <button class="dt-btn dt-btn-primary" data-action="start">Iniciar</button>
-            <button class="dt-btn" data-action="next">Siguiente</button>
-            <button class="dt-btn" data-action="reset">Reiniciar</button>
+            <button class="dt-btn dt-btn-primary" data-action="start">${t.start}</button>
+            <button class="dt-btn" data-action="next">${t.next}</button>
+            <button class="dt-btn" data-action="reset">${t.reset}</button>
           </div>
           <div class="dt-footer">
             <label>
               <input type="checkbox" data-action="sound" />
-              Sonido
+              ${t.sound}
             </label>
           </div>
         </div>
@@ -203,16 +244,16 @@
     miniTime.classList.toggle('dt-over', isOver);
 
     if (isOver) {
-      phaseLabel.textContent = 'tiempo excedido';
+      phaseLabel.textContent = t.overtime;
       phaseLabel.classList.add('dt-over');
       setStatus('dt-over');
     } else {
       phaseLabel.classList.remove('dt-over');
       if (running) {
-        phaseLabel.textContent = remaining <= getWarningThreshold() ? 'queda poco' : 'en curso';
+        phaseLabel.textContent = remaining <= getWarningThreshold() ? t.almostDone : t.running;
         setStatus(remaining <= getWarningThreshold() ? 'dt-warning' : 'dt-running');
       } else {
-        phaseLabel.textContent = 'en pausa';
+        phaseLabel.textContent = t.paused;
         setStatus(null);
       }
     }
@@ -247,14 +288,14 @@
     if (running) { pause(); return; }
     ensureAudio();
     running = true;
-    btnStart.textContent = 'Pausar';
+    btnStart.textContent = t.pause;
     intervalId = setInterval(tick, 1000);
     render();
   }
 
   function pause() {
     running = false;
-    btnStart.textContent = 'Reanudar';
+    btnStart.textContent = t.resume;
     if (intervalId) { clearInterval(intervalId); intervalId = null; }
     render();
   }
@@ -266,7 +307,7 @@
     remaining = totalDuration;
     warned = false;
     finished = false;
-    btnStart.textContent = 'Iniciar';
+    btnStart.textContent = t.start;
     render();
   }
 
@@ -279,7 +320,7 @@
     warned = false;
     finished = false;
     running = true;
-    btnStart.textContent = 'Pausar';
+    btnStart.textContent = t.pause;
     ensureAudio();
     intervalId = setInterval(tick, 1000);
     render();
