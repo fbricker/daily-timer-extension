@@ -578,13 +578,13 @@
 
   function updateRing() {
     const ratio = Math.max(0, Math.min(1, remaining / totalDuration));
-    ring.setAttribute('stroke-dashoffset', CIRC * (1 - ratio));
+    ring.style.strokeDashoffset = CIRC * (1 - ratio);
     if (remaining <= 0) {
-      ring.setAttribute('stroke', '#E24B4A');
+      ring.style.stroke = '#E24B4A';
     } else if (remaining <= getWarningThreshold()) {
-      ring.setAttribute('stroke', '#EF9F27');
+      ring.style.stroke = '#EF9F27';
     } else {
-      ring.setAttribute('stroke', '#1D9E75');
+      ring.style.stroke = '#1D9E75';
     }
   }
 
