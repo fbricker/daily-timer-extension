@@ -41,6 +41,7 @@
       stranger: 'Stranger',
       showOrder: 'Show running order',
       hideOrder: 'Hide running order',
+      linearFilter: 'Auto-filter Linear by speaker',
     },
     es: {
       title: 'Daily timer',
@@ -71,6 +72,7 @@
       stranger: 'Desconocido',
       showOrder: 'Mostrar orden de la daily',
       hideOrder: 'Ocultar orden de la daily',
+      linearFilter: 'Filtrar Linear automáticamente',
     },
   };
   const t = (navigator.language || 'en').toLowerCase().startsWith('es') ? STRINGS.es : STRINGS.en;
@@ -92,11 +94,15 @@
   let dailyStarted = false;
   let panelOpen = false;
   let orderViewOpen = false;
+  let linearFilterEnabled = false;
+  let lastLinearFilterName = null; // last name we successfully clicked in Linear's panel
+  let applyingLinearFilter = false;
+  let linearPanelOpenedByUs = false; // whether we opened Linear's right panel for this daily
   const spoken = new Set(); // names already spoken in the current daily
 
   // Restore preferences
   chrome.storage.local.get(
-    ['totalDuration', 'soundOn', 'visible', 'collapsed', 'position', 'people', 'randomOrder', 'orderViewOpen'],
+    ['totalDuration', 'soundOn', 'visible', 'collapsed', 'position', 'people', 'randomOrder', 'orderViewOpen', 'linearFilterEnabled'],
     (data) => {
       if (typeof data.totalDuration === 'number') totalDuration = data.totalDuration;
       if (typeof data.soundOn === 'boolean') soundOn = data.soundOn;
@@ -105,6 +111,7 @@
       if (Array.isArray(data.people)) people = data.people.filter(p => typeof p === 'string');
       if (typeof data.randomOrder === 'boolean') randomOrder = data.randomOrder;
       if (typeof data.orderViewOpen === 'boolean') orderViewOpen = data.orderViewOpen;
+      if (typeof data.linearFilterEnabled === 'boolean') linearFilterEnabled = data.linearFilterEnabled;
       remaining = totalDuration;
       buildOrder();
       init(data.position);
@@ -112,7 +119,7 @@
   );
 
   function persist() {
-    chrome.storage.local.set({ totalDuration, soundOn, visible, collapsed, people, randomOrder, orderViewOpen });
+    chrome.storage.local.set({ totalDuration, soundOn, visible, collapsed, people, randomOrder, orderViewOpen, linearFilterEnabled });
   }
 
   function persistPosition(top, right) {
@@ -172,13 +179,183 @@
     }
   }
 
+  // ===== Linear auto-filter =====
+  function isOnLinear() {
+    return /(?:^|\.)linear\.app$/i.test(location.hostname);
+  }
+
+  // Find a clickable row in Linear's right Assignees panel whose visible text
+  // contains the speaker's name (or its email-local). Best-effort and brittle:
+  // Linear's class names are obfuscated, so we rely on text + viewport region.
+  function findLinearAssigneeRow(name) {
+    const target = name.toLowerCase().trim();
+    if (!target) return null;
+    const rightCutoff = window.innerWidth * 0.55;
+    const candidates = document.querySelectorAll('button, [role="button"], [role="option"], [role="menuitem"], a, li');
+    let best = null;
+    let bestScore = -1;
+    for (const el of candidates) {
+      const text = (el.innerText || el.textContent || '').toLowerCase().trim();
+      if (!text || text.length > 80 || text.length < target.length) continue;
+      // Substring match against displayed text (covers display name + email).
+      if (!text.includes(target)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+      // Right-side panel only — skip the issue list, header pills, etc.
+      if (rect.left < rightCutoff) continue;
+      let score = 0;
+      if (text.includes('@')) score += 10;       // email row
+      if (text.length < 50) score += 4;          // short row, more likely a list item
+      if (rect.left > window.innerWidth * 0.7) score += 2;
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    }
+    return best;
+  }
+
+  function findLinearPanelToggle() {
+    // The right-side details panel toggle. aria-label flips between "Open details" and "Close details".
+    return document.querySelector(
+      'button[aria-label="Open details"], button[aria-label="Close details"]'
+    );
+  }
+
+  function isLinearPanelOpen(toggle) {
+    return !!toggle && toggle.getAttribute('aria-expanded') === 'true';
+  }
+
+  function realClick(el) {
+    // Some custom button libraries listen on pointerdown/mouseup, not just click.
+    // Fire the full sequence to mimic a real user click.
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const opts = {
+      bubbles: true, cancelable: true, composed: true, view: window,
+      button: 0, buttons: 1,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+    };
+    try { el.dispatchEvent(new PointerEvent('pointerdown', opts)); } catch (_) {}
+    el.dispatchEvent(new MouseEvent('mousedown', opts));
+    try { el.dispatchEvent(new PointerEvent('pointerup', { ...opts, buttons: 0 })); } catch (_) {}
+    el.dispatchEvent(new MouseEvent('mouseup', { ...opts, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent('click', { ...opts, buttons: 0 }));
+  }
+
+  function ensureLinearNarrowStyles() {
+    if (document.getElementById('dt-linear-narrow-style')) return;
+    const style = document.createElement('style');
+    style.id = 'dt-linear-narrow-style';
+    // While the daily is running, narrow the right panel to 125px so only the
+    // assignee avatars are visible (no slide animation, no big reflow).
+    // Rows inside still have a valid bounding rect, so findLinearAssigneeRow
+    // + dispatchEvent keep working.
+    style.textContent = `
+      body.dt-linear-narrow-panel div:has(> aside [data-restore-scroll-view="predefined-view-sidebar"]) {
+        width: 125px !important;
+        overflow: hidden !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function pressLinearPanelShortcut() {
+    // Cmd+I on Mac, Ctrl+I elsewhere. Dispatch on multiple targets — Linear's
+    // hotkey listener may be attached to any of these, depending on focus state.
+    const isMac = /Mac/i.test(navigator.platform || navigator.userAgent);
+    const init = {
+      key: 'i',
+      code: 'KeyI',
+      keyCode: 73,
+      which: 73,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      metaKey: isMac,
+      ctrlKey: !isMac,
+    };
+    const targets = [document, window, document.body, document.activeElement];
+    for (const target of targets) {
+      if (!target) continue;
+      try {
+        target.dispatchEvent(new KeyboardEvent('keydown', init));
+        target.dispatchEvent(new KeyboardEvent('keyup', init));
+      } catch (_) {}
+    }
+  }
+
+  function waitFor(predicate, timeoutMs) {
+    // setInterval-based polling — more reliable than requestAnimationFrame,
+    // which can stall under heavy main-thread work or focus changes.
+    return new Promise(resolve => {
+      const startTime = Date.now();
+      const interval = setInterval(() => {
+        let result;
+        try { result = predicate(); } catch (_) { result = null; }
+        if (result) { clearInterval(interval); resolve(result); return; }
+        if (Date.now() - startTime > timeoutMs) { clearInterval(interval); resolve(null); }
+      }, 60);
+    });
+  }
+
+  async function applyLinearFilter(name) {
+    if (!linearFilterEnabled || !isOnLinear() || !name) return;
+    // For "Stranger N" speakers, filter Linear by "No assignee".
+    const searchTerm = name.startsWith(t.stranger) ? 'No assignee' : name;
+    if (searchTerm === lastLinearFilterName) return;
+    if (applyingLinearFilter) return; // prevent concurrent runs racing on the panel
+    applyingLinearFilter = true;
+    try {
+      // First call of the daily: narrow the panel and (if needed) open it.
+      // Subsequent calls reuse the already-open, already-narrowed panel.
+      if (!document.body.classList.contains('dt-linear-narrow-panel')) {
+        ensureLinearNarrowStyles();
+        const toggle = findLinearPanelToggle();
+        const wasClosed = !toggle || !isLinearPanelOpen(toggle);
+        document.body.classList.add('dt-linear-narrow-panel');
+        if (wasClosed) {
+          linearPanelOpenedByUs = true;
+          pressLinearPanelShortcut();
+        } else {
+          linearPanelOpenedByUs = false;
+        }
+      }
+
+      // Wait for the row to appear (panel + lazy-loaded content).
+      const row = await waitFor(() => findLinearAssigneeRow(searchTerm), 6000);
+      if (!row) return;
+
+      realClick(row);
+      lastLinearFilterName = searchTerm;
+    } finally {
+      applyingLinearFilter = false;
+    }
+  }
+
+  function endLinearFilterSession() {
+    if (!document.body.classList.contains('dt-linear-narrow-panel')) return;
+    if (linearPanelOpenedByUs) {
+      pressLinearPanelShortcut(); // close — Linear will animate it shut at 30px width
+      linearPanelOpenedByUs = false;
+      // Remove the narrowing override after the close animation settles, so
+      // the panel doesn't briefly snap to 360px before disappearing.
+      setTimeout(() => document.body.classList.remove('dt-linear-narrow-panel'), 350);
+    } else {
+      // Was already open — leave it open, just restore its natural width.
+      document.body.classList.remove('dt-linear-narrow-panel');
+    }
+    lastLinearFilterName = null;
+  }
+
   // ===== UI =====
   let root, ring, timeDisplay, phaseLabel, statusDot,
       currentNameEl, nextUpEl,
       durationDisplayEl, btnPlus, btnMinus, btnStart, btnNext,
       btnReset, soundToggle, miniTime, header,
       sidePanelEl, peopleListEl, addInputEl, addFormEl, randomToggleEl,
-      orderListEl, btnOrderToggle, btnPeopleToggle;
+      orderListEl, btnOrderToggle, btnPeopleToggle, linearFilterToggleEl;
 
   function buildUI() {
     root = document.createElement('div');
@@ -198,6 +375,10 @@
           <label class="dt-random-toggle">
             <input type="checkbox" data-action="random" />
             <span>${t.randomOrder}</span>
+          </label>
+          <label class="dt-random-toggle">
+            <input type="checkbox" data-action="linearFilter" />
+            <span>${t.linearFilter}</span>
           </label>
         </div>
       </div>
@@ -283,9 +464,11 @@
     orderListEl = root.querySelector('.dt-order-list');
     btnOrderToggle = root.querySelector('[data-action="toggleOrder"]');
     btnPeopleToggle = root.querySelector('[data-action="people"]');
+    linearFilterToggleEl = root.querySelector('[data-action="linearFilter"]');
 
     soundToggle.checked = soundOn;
     randomToggleEl.checked = randomOrder;
+    linearFilterToggleEl.checked = linearFilterEnabled;
   }
 
   function applyVisibility() {
@@ -473,6 +656,7 @@
 
   function start() {
     if (running) { pause(); return; }
+    const wasFreshDaily = !dailyStarted;
     dailyStarted = true;
     ensureAudio();
     running = true;
@@ -480,6 +664,7 @@
     intervalId = setInterval(tick, 1000);
     renderOrderView(); // refresh "current" highlight
     render();
+    if (wasFreshDaily) applyLinearFilter(nameAt(personCount - 1));
   }
 
   function pause() {
@@ -500,6 +685,8 @@
     personCount = 1;
     spoken.clear();
     dailyStarted = false;
+    lastLinearFilterName = null;
+    endLinearFilterSession();
     buildOrder();
     btnStart.textContent = t.start;
     refreshAll();
@@ -514,6 +701,7 @@
     dailyStarted = true;
     renderOrderView();
     updateCounter();
+    applyLinearFilter(nameAt(personCount - 1));
     if (intervalId) clearInterval(intervalId);
     intervalId = null;
     remaining = totalDuration;
@@ -610,6 +798,13 @@
       randomOrder = randomToggleEl.checked;
       buildOrder();
       refreshAll();
+      persist();
+    });
+
+    linearFilterToggleEl.addEventListener('change', () => {
+      linearFilterEnabled = linearFilterToggleEl.checked;
+      lastLinearFilterName = null; // re-apply on next advance
+      if (!linearFilterEnabled) endLinearFilterSession();
       persist();
     });
 
