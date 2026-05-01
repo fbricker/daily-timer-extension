@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Daily Standup Timer",
+  "version": "1.0.0",
+  "description": "Timer flotante para limitar el tiempo de cada persona en las dailies. Funciona sobre Linear y cualquier otra página.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "action": {
+    "default_title": "Mostrar/ocultar timer de daily",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["timer.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
