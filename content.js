@@ -99,6 +99,7 @@
   let applyingLinearFilter = false;
   let linearPanelOpenedByUs = false; // whether we opened Linear's right panel for this daily
   const spoken = new Set(); // names already spoken in the current daily
+  const linearAvatars = new Map(); // person name → { type: 'img'|'initials', src?, initials?, bgColor? }
 
   // Restore preferences
   chrome.storage.local.get(
@@ -215,6 +216,62 @@
     return best;
   }
 
+  function extractAvatarFromRow(row) {
+    // Avatar is either an <img> (uploaded photo) or a <div> with bg color + initials.
+    const img = row.querySelector('img[alt*="Avatar"], img[width="18"]');
+    if (img && img.src) return { type: 'img', src: img.src };
+    const div = row.querySelector('div[aria-label][style*="backgroundColor"]');
+    if (div) {
+      const initials = (div.textContent || '').trim();
+      const style = div.getAttribute('style') || '';
+      const match = style.match(/--x-backgroundColor:\s*([^;]+)/);
+      const bgColor = match ? match[1].trim() : '';
+      if (initials) return { type: 'initials', initials, bgColor };
+    }
+    return null;
+  }
+
+  function scrapeLinearAvatars() {
+    if (!isOnLinear() || people.length === 0) return;
+    const rightCutoff = window.innerWidth * 0.55;
+    const rows = document.querySelectorAll('div[role="button"][tabindex="0"]');
+    for (const row of rows) {
+      const rect = row.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+      if (rect.left < rightCutoff) continue;
+      const text = (row.innerText || '').toLowerCase();
+      if (!text || text.length > 80) continue;
+      const avatar = extractAvatarFromRow(row);
+      if (!avatar) continue;
+      // Match this row to one of our people by substring (first match wins).
+      for (const personName of people) {
+        if (linearAvatars.has(personName)) continue;
+        const target = personName.toLowerCase().trim();
+        if (target && text.includes(target)) {
+          linearAvatars.set(personName, avatar);
+          break;
+        }
+      }
+    }
+  }
+
+  function createAvatarEl(name) {
+    const data = linearAvatars.get(name);
+    if (!data) return null;
+    if (data.type === 'img') {
+      const img = document.createElement('img');
+      img.src = data.src;
+      img.className = 'dt-avatar';
+      img.alt = '';
+      return img;
+    }
+    const div = document.createElement('div');
+    div.className = 'dt-avatar dt-avatar-initials';
+    if (data.bgColor) div.style.background = data.bgColor;
+    div.textContent = data.initials;
+    return div;
+  }
+
   function findLinearPanelToggle() {
     // The right-side details panel toggle. aria-label flips between "Open details" and "Close details".
     return document.querySelector(
@@ -307,10 +364,11 @@
     if (searchTerm === lastLinearFilterName) return;
     if (applyingLinearFilter) return; // prevent concurrent runs racing on the panel
     applyingLinearFilter = true;
+    const isFirstCall = !document.body.classList.contains('dt-linear-narrow-panel');
     try {
       // First call of the daily: narrow the panel and (if needed) open it.
       // Subsequent calls reuse the already-open, already-narrowed panel.
-      if (!document.body.classList.contains('dt-linear-narrow-panel')) {
+      if (isFirstCall) {
         ensureLinearNarrowStyles();
         const toggle = findLinearPanelToggle();
         const wasClosed = !toggle || !isLinearPanelOpen(toggle);
@@ -327,6 +385,14 @@
       const row = await waitFor(() => findLinearAssigneeRow(searchTerm), 6000);
       if (!row) return;
 
+      // First call: scrape avatars from the panel before clicking (rows are
+      // currently in their stable, unfiltered state).
+      if (isFirstCall) {
+        scrapeLinearAvatars();
+        renderOrderView();
+        renderPeopleList();
+      }
+
       realClick(row);
       lastLinearFilterName = searchTerm;
     } finally {
@@ -335,18 +401,25 @@
   }
 
   function endLinearFilterSession() {
-    if (!document.body.classList.contains('dt-linear-narrow-panel')) return;
-    if (linearPanelOpenedByUs) {
-      pressLinearPanelShortcut(); // close — Linear will animate it shut at 30px width
-      linearPanelOpenedByUs = false;
-      // Remove the narrowing override after the close animation settles, so
-      // the panel doesn't briefly snap to 360px before disappearing.
-      setTimeout(() => document.body.classList.remove('dt-linear-narrow-panel'), 350);
-    } else {
-      // Was already open — leave it open, just restore its natural width.
-      document.body.classList.remove('dt-linear-narrow-panel');
+    const hadNarrowClass = document.body.classList.contains('dt-linear-narrow-panel');
+    if (hadNarrowClass) {
+      if (linearPanelOpenedByUs) {
+        pressLinearPanelShortcut(); // close — Linear will animate it shut at 30px width
+        linearPanelOpenedByUs = false;
+        // Remove the narrowing override after the close animation settles, so
+        // the panel doesn't briefly snap to 360px before disappearing.
+        setTimeout(() => document.body.classList.remove('dt-linear-narrow-panel'), 350);
+      } else {
+        // Was already open — leave it open, just restore its natural width.
+        document.body.classList.remove('dt-linear-narrow-panel');
+      }
     }
     lastLinearFilterName = null;
+    if (linearAvatars.size > 0) {
+      linearAvatars.clear();
+      renderOrderView();
+      renderPeopleList();
+    }
   }
 
   // ===== UI =====
@@ -604,6 +677,8 @@
 
       li.appendChild(handle);
       li.appendChild(num);
+      const avatar = createAvatarEl(name);
+      if (avatar) li.appendChild(avatar);
       li.appendChild(nameEl);
       orderListEl.appendChild(li);
     });
@@ -626,6 +701,8 @@
     }
     people.forEach((name, i) => {
       const li = document.createElement('li');
+      const avatar = createAvatarEl(name);
+      if (avatar) li.appendChild(avatar);
       const nameSpan = document.createElement('span');
       nameSpan.className = 'dt-person-name';
       nameSpan.textContent = name;
